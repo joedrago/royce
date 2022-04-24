@@ -3,8 +3,6 @@
 
 #include <vector>
 
-static bool shutdown_ = false;
-
 // ---------------------------------------------------------------------------------
 
 class Semaphore
@@ -46,37 +44,10 @@ private:
 
 // ---------------------------------------------------------------------------------
 
-DWORD WINAPI pokeProc(void * param)
-{
-    ProtectedInteger * p = static_cast<ProtectedInteger *>(param);
-
-    printf("[Poke][%p] Created.\n", param);
-
-    for (;;) {
-        int * v = p->acquire();
-        if (shutdown_) {
-            p->release();
-            break;
-        }
-
-        int newValue = *v + 1;
-        printf("[Poke][%p] Changing protected value: %d -> %d\n", param, *v, newValue);
-        *v = newValue;
-        p->release();
-
-        Sleep(50);
-    }
-
-    printf("[Poke][%p] Shutdown.\n", param);
-    return 0;
-}
-
-// ---------------------------------------------------------------------------------
-
 class KeyProtection
 {
 public:
-    KeyProtection() : owned_(false), keycode_(0), thread_(INVALID_HANDLE_VALUE) {}
+    KeyProtection() : owned_(false), keycode_(0), shutdown_(false), thread_(INVALID_HANDLE_VALUE) {}
 
     int value() { return pv_.value(); }
 
@@ -89,13 +60,13 @@ public:
             owned_ = owned;
 
             if (owned_) {
-                printf("[Main][%p] Claiming : %c\n", &pv_, keycode_);
+                printf("[Main][%c] Claiming\n", keycode_);
                 pv_.acquire();
-                printf("[Main][%p] Claimed  : %c\n", &pv_, keycode_);
+                printf("[Main][%c] Claimed\n", keycode_);
             } else {
-                printf("[Main][%p] Releasing: %c\n", &pv_, keycode_);
+                printf("[Main][%c] Releasing\n", keycode_);
                 pv_.release();
-                printf("[Main][%p] Released : %c\n", &pv_, keycode_);
+                printf("[Main][%c] Released\n", keycode_);
             }
         }
     }
@@ -103,21 +74,48 @@ public:
     void start()
     {
         DWORD ignored = 0;
-        thread_ = CreateThread(NULL, 0, pokeProc, &pv_, 0, &ignored);
+        thread_ = CreateThread(NULL, 0, KeyProtection::threadFunc, this, 0, &ignored);
     }
 
     void stop()
     {
         setOwned(false);
 
+        shutdown_ = true;
         WaitForSingleObject(thread_, INFINITE);
         CloseHandle(thread_);
+    }
+
+    static DWORD WINAPI threadFunc(void * param)
+    {
+        KeyProtection * kp = static_cast<KeyProtection *>(param);
+
+        printf("[Poke][%c] Created.\n", kp->keycode());
+
+        for (;;) {
+            int * v = kp->pv_.acquire();
+            if (kp->shutdown_) {
+                kp->pv_.release();
+                break;
+            }
+
+            int newValue = *v + 1;
+            printf("[Poke][%c] Changing protected value: %d -> %d\n", kp->keycode(), *v, newValue);
+            *v = newValue;
+            kp->pv_.release();
+
+            Sleep(50);
+        }
+
+        printf("[Poke][%c] Shutdown.\n", kp->keycode());
+        return 0;
     }
 
 private:
     ProtectedInteger pv_;
     bool owned_;
     int keycode_;
+    bool shutdown_;
     HANDLE thread_;
 };
 
@@ -137,7 +135,6 @@ int main(int argc, char * argv[])
         it->setOwned(true);
     }
 
-    // Spawn all worker threads
     printf("[Main] Spawning worker threads...\n");
     for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
         it->start();
@@ -153,13 +150,12 @@ int main(int argc, char * argv[])
     }
 
     printf("[Main] Shutting down...\n");
-    shutdown_ = true;
     for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
         it->stop();
     }
 
     for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
-        printf("[Main][%p] Final value: %d\n", &(*it), it->value());
+        printf("[Main][%c] Final value: %d\n", it->keycode(), it->value());
     }
 
     printf("[Main] Shutdown complete.\n");
