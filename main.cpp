@@ -79,9 +79,8 @@ public:
 
     void stop()
     {
-        setOwned(false);
-
         shutdown_ = true;
+        setOwned(false);
         WaitForSingleObject(thread_, INFINITE);
         CloseHandle(thread_);
     }
