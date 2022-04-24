@@ -70,7 +70,7 @@ public:
         CloseHandle(thread_);
     }
 
-    DWORD workerThread()
+    void workerThread()
     {
         printf("[Worker][%c] Created.\n", keycode_);
 
@@ -94,14 +94,14 @@ public:
         }
 
         printf("[Worker][%c] Shutdown.\n", keycode_);
-        return 0;
     }
 
     static DWORD WINAPI workerThreadProc(void * param)
     {
         // Switch from a static func to a method
         KeyProtection * kp = static_cast<KeyProtection *>(param);
-        return kp->workerThread();
+        kp->workerThread();
+        return 0;
     }
 
 private:
