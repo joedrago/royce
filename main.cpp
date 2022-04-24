@@ -49,7 +49,8 @@ class KeyProtection
 public:
     KeyProtection() : keycode_(0), shutdown_(false), thread_(INVALID_HANDLE_VALUE) {}
 
-    void configure(ProtectedValue *pv, int keycode, int valueToSet) {
+    void configure(ProtectedValue * pv, int keycode, int valueToSet)
+    {
         pv_ = pv;
         keycode_ = keycode;
         valueToSet_ = valueToSet;
@@ -73,18 +74,20 @@ public:
     {
         printf("[Worker][%c] Created.\n", keycode_);
 
-        for (;;) {
+        while (!shutdown_) {
             Sleep(50);
 
-            if (shutdown_) {
-                break;
-            }
-
-            if(GetAsyncKeyState(keycode_) == 0) {
+            if (GetAsyncKeyState(keycode_) == 0) {
                 continue;
             }
 
             int * v = pv_->acquire();
+            if (shutdown_) {
+                // If we were asked to shutdown while sleeping in acquire(),
+                // just bail out now.
+                pv_->release();
+                break;
+            }
             printf("[Worker][%c] Changing: %d -> %d\n", keycode_, *v, valueToSet_);
             *v = valueToSet_;
             pv_->release();
@@ -100,8 +103,9 @@ public:
         KeyProtection * kp = static_cast<KeyProtection *>(param);
         return kp->workerThread();
     }
+
 private:
-    ProtectedValue *pv_;
+    ProtectedValue * pv_;
     int keycode_;
     int valueToSet_;
 
