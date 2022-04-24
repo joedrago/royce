@@ -22,10 +22,10 @@ private:
 
 // ---------------------------------------------------------------------------------
 
-class ProtectedInteger
+class ProtectedValue
 {
 public:
-    ProtectedInteger() : semaphore_(1), value_(0) {}
+    ProtectedValue() : semaphore_(1), value_(0) {}
 
     int * acquire()
     {
@@ -47,73 +47,64 @@ private:
 class KeyProtection
 {
 public:
-    KeyProtection() : owned_(false), keycode_(0), shutdown_(false), thread_(INVALID_HANDLE_VALUE) {}
+    KeyProtection() : keycode_(0), shutdown_(false), thread_(INVALID_HANDLE_VALUE) {}
 
-    int value() { return pv_.value(); }
-
-    void setKeycode(int keycode) { keycode_ = keycode; }
-    int keycode() { return keycode_; }
-
-    void setOwned(bool owned)
-    {
-        if (owned_ != owned) {
-            owned_ = owned;
-
-            if (owned_) {
-                printf("[Main][%c] Claiming\n", keycode_);
-                pv_.acquire();
-                printf("[Main][%c] Claimed\n", keycode_);
-            } else {
-                printf("[Main][%c] Releasing\n", keycode_);
-                pv_.release();
-                printf("[Main][%c] Released\n", keycode_);
-            }
-        }
+    void configure(ProtectedValue *pv, int keycode, int valueToSet) {
+        pv_ = pv;
+        keycode_ = keycode;
+        valueToSet_ = valueToSet;
     }
+    int keycode() { return keycode_; }
 
     void start()
     {
         DWORD ignored = 0;
-        thread_ = CreateThread(NULL, 0, KeyProtection::threadFunc, this, 0, &ignored);
+        thread_ = CreateThread(NULL, 0, KeyProtection::workerThreadProc, this, 0, &ignored);
     }
 
     void stop()
     {
         shutdown_ = true;
-        setOwned(false);
         WaitForSingleObject(thread_, INFINITE);
         CloseHandle(thread_);
     }
 
-    static DWORD WINAPI threadFunc(void * param)
+    DWORD workerThread()
     {
-        KeyProtection * kp = static_cast<KeyProtection *>(param);
-
-        printf("[Poke][%c] Created.\n", kp->keycode());
+        printf("[Worker][%c] Created.\n", keycode_);
 
         for (;;) {
-            int * v = kp->pv_.acquire();
-            if (kp->shutdown_) {
-                kp->pv_.release();
+            Sleep(50);
+
+            if (shutdown_) {
                 break;
             }
 
-            int newValue = *v + 1;
-            printf("[Poke][%c] Changing protected value: %d -> %d\n", kp->keycode(), *v, newValue);
-            *v = newValue;
-            kp->pv_.release();
+            if(GetAsyncKeyState(keycode_) == 0) {
+                continue;
+            }
 
-            Sleep(50);
+            int * v = pv_->acquire();
+            printf("[Worker][%c] Changing: %d -> %d\n", keycode_, *v, valueToSet_);
+            *v = valueToSet_;
+            pv_->release();
         }
 
-        printf("[Poke][%c] Shutdown.\n", kp->keycode());
+        printf("[Worker][%c] Shutdown.\n", keycode_);
         return 0;
     }
 
+    static DWORD WINAPI workerThreadProc(void * param)
+    {
+        // Switch from a static func to a method
+        KeyProtection * kp = static_cast<KeyProtection *>(param);
+        return kp->workerThread();
+    }
 private:
-    ProtectedInteger pv_;
-    bool owned_;
+    ProtectedValue *pv_;
     int keycode_;
+    int valueToSet_;
+
     bool shutdown_;
     HANDLE thread_;
 };
@@ -122,17 +113,14 @@ private:
 
 int main(int argc, char * argv[])
 {
+    ProtectedValue theOneToRuleThemAll;
+
     static const size_t keyCount = 3;
     std::vector<KeyProtection> keyProtections;
     keyProtections.resize(keyCount);
-    keyProtections[0].setKeycode('1');
-    keyProtections[1].setKeycode('2');
-    keyProtections[2].setKeycode('3');
-
-    printf("[Main] Taking ownership of all keys...\n");
-    for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
-        it->setOwned(true);
-    }
+    keyProtections[0].configure(&theOneToRuleThemAll, '1', 1);
+    keyProtections[1].configure(&theOneToRuleThemAll, '2', 2);
+    keyProtections[2].configure(&theOneToRuleThemAll, '3', 3);
 
     printf("[Main] Spawning worker threads...\n");
     for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
@@ -141,10 +129,6 @@ int main(int argc, char * argv[])
 
     printf("[Main] Hold any of the 123 keys, or press Space to cleanup.\n");
     while (!GetAsyncKeyState(VK_SPACE)) {
-        for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
-            it->setOwned(GetAsyncKeyState(it->keycode()) == 0);
-        }
-
         Sleep(50);
     }
 
@@ -153,10 +137,6 @@ int main(int argc, char * argv[])
         it->stop();
     }
 
-    for (auto it = keyProtections.begin(); it != keyProtections.end(); ++it) {
-        printf("[Main][%c] Final value: %d\n", it->keycode(), it->value());
-    }
-
-    printf("[Main] Shutdown complete.\n");
+    printf("[Main] Shutdown complete. Final value: %d\n", theOneToRuleThemAll.value());
     return 0;
 }
